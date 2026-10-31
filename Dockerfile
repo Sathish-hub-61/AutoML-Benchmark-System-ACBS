@@ -15,12 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependencies first for caching
-COPY pyproject.toml README.md ./
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install -e ".[dev,postgres]"
-
 # Copy source and application code
 COPY . .
+
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -e ".[dev,postgres]"
 
 EXPOSE 8000 8501
 
