@@ -22,7 +22,7 @@ RUN pip install --upgrade pip setuptools wheel && \
     pip install -e ".[dev,postgres]"
 
 # Create isolated framework environments
-RUN python scripts/setup_envs.py
+RUN pip install uv && python scripts/setup_envs.py
 
 EXPOSE 8000 8501
 
