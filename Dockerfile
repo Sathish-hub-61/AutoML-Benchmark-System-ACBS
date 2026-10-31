@@ -21,6 +21,9 @@ COPY . .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install -e ".[dev,postgres]"
 
+# Create isolated framework environments
+RUN python scripts/setup_envs.py
+
 EXPOSE 8000 8501
 
 CMD ["uvicorn", "acbs.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
