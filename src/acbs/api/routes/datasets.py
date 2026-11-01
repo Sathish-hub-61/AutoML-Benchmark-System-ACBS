@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -10,16 +13,28 @@ from acbs.api.deps import get_session
 from acbs.api.schemas import DatasetUploadResponse
 from acbs.data.loader import load_local
 from acbs.data.profiler import profile_dataset
-from acbs.data.target_detection import detect_target_in_bytes
+from acbs.data.target_detection import detect_target_in_file
 from acbs.exceptions import DatasetError
 from acbs.storage.repository import Repository
 from acbs.utils.paths import repo_root, settings
-from acbs.utils.timeout import file_hash
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 _UPLOAD_LOCK = threading.Lock()
 UPLOAD_DIR = repo_root() / "data" / "raw"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Streamed uploads are written in 1 MiB chunks; the size cap is enforced
+# incrementally so an oversized file is rejected without ever being fully
+# buffered in RAM.
+_CHUNK = 1024 * 1024
+
+
+def _unlink(path: str | Path) -> None:
+    """Best-effort removal of a temp file; ignores missing files."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
 
 
 @router.get("")
@@ -56,28 +71,36 @@ async def upload_dataset(
     target: str | None = None,
     session: Session = Depends(get_session),
 ):
-    raw = await file.read()
     max_bytes = int(settings.max_upload_mb) * 1024 * 1024
-    if len(raw) > max_bytes:
-        raise HTTPException(413, "file too large")
     name = Path(file.filename or "upload.csv").name.replace("..", "")
 
-    # The human only uploads the file: the system infers the target column
-    # unless one was supplied explicitly. Detection runs on the raw bytes BEFORE
-    # anything is written, so an implausible file never lands on disk.
-    target_source = "explicit"
-    if not target:
-        try:
-            target = detect_target_in_bytes(raw, suffix=Path(name).suffix)
-        except DatasetError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        target_source = "auto"
+    # Stream to a temp file in the upload dir, enforcing the size cap
+    # incrementally and computing the digest as bytes arrive. The file never
+    # lives fully in RAM and an oversized upload is rejected early.
+    hasher = hashlib.sha256()
+    total = 0
+    fd, tmp_path = tempfile.mkstemp(dir=UPLOAD_DIR, prefix=".upload-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(413, "file too large")
+                hasher.update(chunk)
+                tmp.write(chunk)
+        dest = UPLOAD_DIR / name
+        os.replace(tmp_path, dest)
+    except HTTPException:
+        _unlink(tmp_path)
+        raise
+    except Exception:
+        _unlink(tmp_path)
+        raise
 
-    dest = UPLOAD_DIR / name
-    with _UPLOAD_LOCK:
-        dest.write_bytes(raw)
-
-    digest = file_hash(raw)
+    digest = hasher.hexdigest()
     repo = Repository(session)
     existing = repo.get_dataset_by_hash(digest)
     if existing:
@@ -95,6 +118,16 @@ async def upload_dataset(
         # Same bytes but a different target (or the stored copy is gone):
         # repoint the existing row at this upload instead of returning a
         # dataset whose backing file no longer exists.
+
+    # Detect the target from the file on disk (bounded row sample) instead of
+    # re-parsing the full in-memory bytes.
+    target_source = "explicit"
+    if not target:
+        try:
+            target = detect_target_in_file(dest)
+        except DatasetError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        target_source = "auto"
 
     try:
         loaded = load_local(dest, target)
