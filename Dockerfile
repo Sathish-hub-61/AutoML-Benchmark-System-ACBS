@@ -26,4 +26,4 @@ RUN pip install uv && python scripts/setup_envs.py
 
 EXPOSE 8000 8501
 
-CMD ["uvicorn", "acbs.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn acbs.api.main:app --host 0.0.0.0 --port $PORT
