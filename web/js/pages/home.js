@@ -27,9 +27,7 @@ async function loadStats() {
     <div class="stat"><div class="label">Experiments</div><div class="value">${experiments.length}</div>
       <div class="hint">${completed} completed</div></div>
     <div class="stat"><div class="label">Frameworks ready</div><div class="value">${installed}/${frameworks.length}</div>
-      <div class="hint">isolated environments</div></div>
-    <div class="stat"><div class="label">Protocol</div><div class="value">AMLB</div>
-      <div class="hint">identical folds · one seed</div></div>`;
+      <div class="hint">isolated environments</div></div>`;
 
   const recent = experiments.slice(-5).reverse();
   const target = document.getElementById("recent");

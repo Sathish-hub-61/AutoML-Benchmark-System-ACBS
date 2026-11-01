@@ -34,7 +34,7 @@ function mountShell() {
   footer.className = "site-footer";
   footer.innerHTML = `
     <div class="inner">
-      <span>Auto Classifier Benchmarking System — AMLB-style protocol, identical folds, central scoring.</span>
+      <span>Auto Classifier Benchmarking System.</span>
       <span class="mono" id="foot-version"></span>
     </div>`;
   document.body.append(footer);
