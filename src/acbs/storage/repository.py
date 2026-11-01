@@ -29,6 +29,37 @@ class Repository:
     def list_datasets(self) -> list[DatasetRow]:
         return list(self.session.query(DatasetRow).order_by(DatasetRow.id.desc()).all())
 
+    def delete_dataset(self, dataset_id: int, *, force: bool = False) -> DatasetRow | None:
+        """Delete a dataset row and its raw file.
+
+        Refuses (returns ``None``) when experiments reference the dataset unless
+        ``force=True``, in which case dependent experiments are deleted first
+        (cascade). The backing file under ``data/raw`` is always removed when
+        the row is deleted.
+        """
+        from acbs.utils.paths import repo_root
+
+        row = self.session.get(DatasetRow, dataset_id)
+        if row is None:
+            return None
+        dependent = self.session.query(ExperimentRow).filter_by(dataset_id=dataset_id).first()
+        if dependent is not None and not force:
+            return None
+        if force:
+            for exp in self.session.query(ExperimentRow).filter_by(dataset_id=dataset_id).all():
+                self.session.delete(exp)
+        # Remove the raw upload file if present.
+        try:
+            raw_file = repo_root() / "data" / "raw" / row.name
+            if raw_file.exists():
+                raw_file.unlink()
+        except OSError:
+            # A missing or locked backing file must not block row deletion.
+            pass
+        self.session.delete(row)
+        self.session.commit()
+        return row
+
     def create_experiment(
         self, dataset_id: int, config: dict, preferences: dict, seed: int
     ) -> ExperimentRow:

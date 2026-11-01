@@ -6,7 +6,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from acbs.api.deps import get_session
@@ -15,6 +15,7 @@ from acbs.data.loader import load_local
 from acbs.data.profiler import profile_dataset
 from acbs.data.target_detection import detect_target_in_file
 from acbs.exceptions import DatasetError
+from acbs.storage.models import ExperimentRow
 from acbs.storage.repository import Repository
 from acbs.utils.paths import repo_root, settings
 
@@ -63,6 +64,31 @@ def get_dataset(dataset_id: int, session: Session = Depends(get_session)):
         "source": row.source,
         "profile": row.profile_json,
     }
+
+
+@router.delete("/{dataset_id}")
+def delete_dataset(
+    dataset_id: int,
+    force: bool = Query(False),
+    session: Session = Depends(get_session),
+):
+    """Delete a dataset.
+
+    Refuses with 409 when experiments reference the dataset unless ``force=1``,
+    which cascades and deletes dependent experiments too. The raw file is always
+    removed.
+    """
+    repo = Repository(session)
+    row = repo.delete_dataset(dataset_id, force=force)
+    if row is None:
+        dependent = session.query(ExperimentRow).filter_by(dataset_id=dataset_id).first()
+        if dependent is not None:
+            raise HTTPException(
+                409,
+                "dataset is referenced by experiments; use force=1 to cascade",
+            )
+        raise HTTPException(404, "dataset not found")
+    return {"ok": True, "deleted": row.id, "name": row.name}
 
 
 @router.post("", response_model=DatasetUploadResponse)
