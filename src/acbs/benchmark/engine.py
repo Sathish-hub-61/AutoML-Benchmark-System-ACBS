@@ -259,7 +259,7 @@ def run_benchmark(
     X_train, X_test, y_train, y_test = make_holdout_split(
         dataset.X, dataset.y, test_size=parsed.test_size, seed=parsed.seed
     )
-    cv = make_cv_splitter(cv_folds=parsed.cv_folds, seed=parsed.seed)
+    cv = make_cv_splitter(y=y_train, cv_folds=parsed.cv_folds, seed=parsed.seed)
     specs = get_models(None if parsed.models == ["all"] else parsed.models) if parsed.models else []
     classes = list(range(int(pd.Series(dataset.y).nunique())))
     results: list[ModelRunResult] = []
