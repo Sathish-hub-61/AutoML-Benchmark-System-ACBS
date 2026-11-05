@@ -8,6 +8,13 @@ function openHref(r) {
   return `run-monitor.html?id=${r.id}`;
 }
 
+function confirmDelete(msg) {
+  return new Promise((resolve) => {
+    if (window.confirm(msg)) resolve(true);
+    else resolve(false);
+  });
+}
+
 async function load() {
   const rows = (await apiGet("/experiments").catch(() => [])).slice().reverse();
   const box = document.getElementById("table");
@@ -55,6 +62,8 @@ async function load() {
   box.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", async () => {
       const rid = b.dataset.del;
+      const ok = await confirmDelete(`Delete experiment #${rid}?`);
+      if (!ok) return;
       b.disabled = true;
       try {
         const res = await apiDelete(`/experiments/${rid}`);
@@ -70,6 +79,52 @@ async function load() {
       }
     })
   );
+
+  // Bulk remove all history ------------------------------------------------
+  let allBox = box.parentNode.querySelector(".bulk-delete");
+  if (allBox) allBox.remove();
+  allBox = document.createElement("div");
+  allBox.className = "mt-4";
+  allBox.innerHTML = `
+    <div class="bulk-delete">
+      <h3 style="margin:0 0 8px 0">Remove all history</h3>
+      <p class="faint small" style="margin:0 0 10px 0">
+        Permanently delete every experiment and its results. Cannot be undone.
+      </p>
+      <button class="btn danger" id="hist-del-all">Remove all history</button>
+    </div>
+  `;
+  box.parentNode.insertBefore(allBox, box.nextSibling);
+
+  const delAll = allBox.querySelector("#hist-del-all");
+  let pending = false;
+  delAll.addEventListener("click", async () => {
+    if (pending) return;
+    const ok = await confirmDelete(
+      `This will permanently delete all ${rows.length} experiments. Continue?`
+    );
+    if (!ok) return;
+    pending = true;
+    delAll.disabled = true;
+    delAll.textContent = "Deleting…";
+    let failed = 0;
+    for (const r of rows) {
+      try {
+        await apiDelete(`/experiments/${r.id}`);
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed === 0) {
+      toast("All history removed", "ok");
+      load();
+    } else {
+      toast(`${failed} deletion(s) failed`, "error");
+    }
+    pending = false;
+    delAll.disabled = false;
+    delAll.textContent = "Remove all history";
+  });
 }
 
 document.addEventListener("DOMContentLoaded", () =>
