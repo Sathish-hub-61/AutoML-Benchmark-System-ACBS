@@ -4,7 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from api_client import ApiError, advisor, recommendation, rerank
+from acbs.reporting.charts import confusion_matrix_heatmap, roc_curves
+from api_client import ApiError, advisor, raw_results, recommendation, rerank
 from components.charts_view import (
     framework_internals,
     overview_charts,
@@ -73,6 +74,14 @@ def render() -> None:
     score_table = rec.get("score_table") or []
     df = pd.DataFrame(score_table)
 
+    # Full result payload (per-model y_true / y_pred / y_proba / classes)
+    try:
+        result_payload = raw_results(int(exp_id))
+    except ApiError:
+        result_payload = {"models": []}
+    models = result_payload.get("models", []) or []
+    classes = result_payload.get("classes", [])
+
     # ── Tabs ────────────────────────────────────────────────────────────────
     tab_names = [
         "📊 Overview",
@@ -81,6 +90,7 @@ def render() -> None:
         "📋 Leaderboard",
         "🎚 Sensitivity",
         "🔬 Framework Internals",
+        "🎯 Diagnostics",
     ]
     tabs = st.tabs(tab_names)
 
@@ -102,3 +112,64 @@ def render() -> None:
 
     with tabs[5]:
         framework_internals(df)
+
+    with tabs[6]:
+        _diagnostics_tab(models, classes)
+
+
+def _diagnostics_tab(models: list[dict], classes: list[str]) -> None:
+    """Per-model confusion matrix and ROC curves from stored predictions."""
+    st.header("🎯 Diagnostics")
+    st.caption("Confusion matrix and ROC curve computed from each model's stored test predictions.")
+
+    if not models:
+        st.info("No model predictions available for diagnostics.")
+        return
+
+    ok_models = [m for m in models if m.get("status") == "ok" and m.get("y_pred")]
+    if not ok_models:
+        st.info("No completed models with stored predictions.")
+        return
+
+    model_names = [m["model_name"] for m in ok_models]
+    chosen = st.selectbox("Model", model_names, key="diag_model")
+    model = next(m for m in ok_models if m["model_name"] == chosen)
+
+    y_true = model.get("y_true") or []
+    y_pred = model.get("y_pred") or []
+    y_proba = model.get("y_proba")
+    labels = classes or list(range(len(set(y_true) | set(y_pred))))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        norm = st.selectbox(
+            "Confusion matrix normalization",
+            ["none", "true", "pred", "all"],
+            index=0,
+            key="diag_norm",
+        )
+        fig_cm = confusion_matrix_heatmap(
+            y_true, y_pred, labels=labels, normalize=None if norm == "none" else norm
+        )
+        st.plotly_chart(fig_cm, width="stretch")
+        tm = model.get("test_metrics") or {}
+        st.markdown("### Test metrics")
+        metric_cols = st.columns(4)
+        for i, (k, v) in enumerate(
+            {
+                "accuracy": tm.get("accuracy"),
+                "f1_macro": tm.get("f1_macro"),
+                "precision_macro": tm.get("precision_macro"),
+                "recall_macro": tm.get("recall_macro"),
+                "roc_auc": tm.get("roc_auc"),
+            }.items()
+        ):
+            with metric_cols[i % 4]:
+                st.metric(k, f"{v:.4f}" if isinstance(v, (int, float)) else "—")
+
+    with c2:
+        if y_proba:
+            fig_roc = roc_curves(y_true, y_proba)
+            st.plotly_chart(fig_roc, width="stretch")
+        else:
+            st.info("No probability scores stored for this model (ROC unavailable).")

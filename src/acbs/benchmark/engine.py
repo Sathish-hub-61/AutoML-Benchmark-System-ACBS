@@ -31,6 +31,11 @@ logger = get_logger(__name__)
 # Callback signature: (model_name, step, total, message, status=None, elapsed_s=None) -> None
 ProgressCb = Callable[..., None] | None
 
+# Cap stored per-model predictions (y_pred / y_true / y_proba) so very large
+# datasets do not bloat the stored JSON. Metrics are always computed on the
+# full test set; only the stored sample used for visualization is subsampled.
+MAX_STORED_PREDICTIONS = 20_000
+
 
 class BenchmarkConfig(BaseModel):
     models: list[str] = Field(default_factory=lambda: ["all"])
@@ -120,6 +125,42 @@ def _cv_metrics_from_sklearn(
     return means, stds, folds
 
 
+def _subsample_predictions(y_true, y_pred, y_proba, limit: int = MAX_STORED_PREDICTIONS):
+    """Subsample stored predictions to keep stored JSON small on large datasets.
+
+    Metrics are always computed on the full test set; only the stored sample
+    used for visualization (confusion matrix / ROC) is subsampled.
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    n = len(y_true)
+    if n <= limit:
+        if y_proba is not None and hasattr(y_proba, "tolist"):
+            y_proba_out = y_proba.tolist()
+        elif y_proba is not None:
+            y_proba_out = list(y_proba)
+        else:
+            y_proba_out = None
+        return (
+            [int(x) for x in y_true.tolist()],
+            [int(x) for x in y_pred.tolist()],
+            y_proba_out,
+        )
+    idx = np.random.default_rng(42).choice(n, size=limit, replace=False)
+    idx = np.sort(idx)
+    if y_proba is not None and hasattr(y_proba, "tolist"):
+        y_proba_out = y_proba[idx].tolist()
+    elif y_proba is not None:
+        y_proba_out = [y_proba[i] for i in idx.tolist()]
+    else:
+        y_proba_out = None
+    return (
+        [int(x) for x in y_true[idx].tolist()],
+        [int(x) for x in y_pred[idx].tolist()],
+        y_proba_out,
+    )
+
+
 def _run_one(
     spec: ModelSpec,
     X_train,
@@ -167,6 +208,7 @@ def _run_one(
         y_pred = pipe.predict(X_test)
         y_proba = predict_proba_or_decision(pipe, X_test)
         test_metrics = compute_metrics(y_test, y_pred, y_proba, classes)
+        y_pred, y_true, y_proba_stored = _subsample_predictions(y_test, y_pred, y_proba)
         return ModelRunResult(
             model_name=spec.name,
             status="ok",
@@ -179,9 +221,9 @@ def _run_one(
             prediction_time_per_1k=pred_t,
             best_params=best_params,
             interpretability_score=spec.interpretability_score,
-            y_pred=[int(x) for x in np.asarray(y_pred).tolist()],
-            y_true=[int(x) for x in np.asarray(y_test).tolist()],
-            y_proba=y_proba.tolist() if y_proba is not None else None,
+            y_pred=y_pred,
+            y_true=y_true,
+            y_proba=y_proba_stored,
         )
     except TimeoutError as exc:
         logger.warning("timeout %s: %s", spec.name, exc)
@@ -347,6 +389,9 @@ def run_benchmark(
                 else 0.0
             )
             interp = 1 if fid in {"autogluon", "h2o", "lightautoml"} else 2
+            y_true_sub, y_pred_sub, y_proba_sub = _subsample_predictions(
+                eval_res["y_true"], eval_res["y_pred"], eval_res["y_proba"]
+            )
             results.append(
                 ModelRunResult(
                     model_name=fid,
@@ -363,9 +408,9 @@ def run_benchmark(
                     budget_used_ratio=budget_used_ratio,
                     model_summary=run_res.best_pipeline,
                     interpretability_score=interp,
-                    y_pred=eval_res["y_pred"],
-                    y_true=eval_res["y_true"],
-                    y_proba=eval_res["y_proba"],
+                    y_pred=y_pred_sub,
+                    y_true=y_true_sub,
+                    y_proba=y_proba_sub,
                 )
             )
         except Exception as exc:

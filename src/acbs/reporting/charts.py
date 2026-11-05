@@ -98,9 +98,34 @@ def cv_boxplot(fold_scores: pd.DataFrame) -> go.Figure:
     )
 
 
-def confusion_matrix_heatmap(y_true, y_pred, labels=None) -> go.Figure:
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
-    fig = px.imshow(cm, text_auto=True, color_continuous_scale="Blues", title="Confusion matrix")
+def confusion_matrix_heatmap(
+    y_true, y_pred, labels=None, normalize: str | None = None
+) -> go.Figure:
+    """Confusion matrix heatmap with class labels and optional normalization.
+
+    ``normalize`` accepts ``"true"`` (row), ``"pred"`` (column) or ``"all"``;
+    any other value yields raw counts.
+    """
+    cm = confusion_matrix(y_true, y_pred, labels=labels, normalize=normalize)
+    title = "Confusion matrix"
+    if normalize == "true":
+        title += " (row-normalized)"
+    elif normalize == "pred":
+        title += " (column-normalized)"
+    elif normalize == "all":
+        title += " (normalized)"
+    z_text = np.round(cm, 2) if normalize else cm
+    fig = px.imshow(
+        z_text,
+        text_auto=True,
+        color_continuous_scale="Blues",
+        title=title,
+        labels=dict(x="Predicted label", y="True label", color="Count"),
+    )
+    if labels is not None:
+        tick_text = [str(lbl) for lbl in labels]
+        fig.update_xaxes(tickmode="array", tickvals=list(range(len(labels))), ticktext=tick_text)
+        fig.update_yaxes(tickmode="array", tickvals=list(range(len(labels))), ticktext=tick_text)
     return fig
 
 
