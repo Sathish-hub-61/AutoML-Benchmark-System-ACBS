@@ -137,6 +137,12 @@ def cancel_experiment(exp_id: int) -> dict[str, Any]:
     return r.json()
 
 
+def delete_experiment(exp_id: int) -> dict[str, Any]:
+    r = requests.delete(f"{BASE}/experiments/{exp_id}", timeout=15)
+    _raise(r)
+    return r.json()
+
+
 def results(exp_id: int) -> dict[str, Any]:
     r = requests.get(f"{BASE}/experiments/{exp_id}/results", timeout=30)
     _raise(r)
