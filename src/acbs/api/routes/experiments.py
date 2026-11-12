@@ -303,18 +303,21 @@ def rerank(experiment_id: int, payload: RerankRequest, session: Session = Depend
     exp = repo.get_experiment(experiment_id)
     if not exp or not exp.result_json:
         raise HTTPException(404, "results not found")
-    result = BenchmarkResult.model_validate(exp.result_json)
-    rec, table, explanation, stab, _ = _recommend(result, payload.preferences)
-    repo.save_recommendation(experiment_id, rec["model_name"], table, explanation, stab)
-    repo.update_status(experiment_id, exp.status, preferences_json=payload.preferences.model_dump())
-    return json_safe(
-        {
+    try:
+        result = BenchmarkResult.model_validate(exp.result_json)
+        rec, table, explanation, stab, _ = _recommend(result, payload.preferences)
+        repo.save_recommendation(experiment_id, rec["model_name"], table, explanation, stab)
+        repo.update_status(experiment_id, exp.status, preferences_json=payload.preferences.model_dump())
+        return json_safe({
             "model_name": rec["model_name"],
             "explanation": explanation,
             "stability_pct": stab,
             "score_table": table,
-        }
-    )
+        })
+    except Exception as exc:
+        logger.exception("rerank failed for experiment %s", experiment_id)
+        raise HTTPException(500, f"rerank failed: {exc}")
+
 
 
 @router.get("/{experiment_id}/report")

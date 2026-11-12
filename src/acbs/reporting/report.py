@@ -39,6 +39,16 @@ def build_html_report(result: BenchmarkResult, prefs: UserPreferences | None = N
         accuracy_vs_time_scatter(df, pareto).to_html(full_html=False, include_plotlyjs=False),
         score_breakdown_stacked_bar(scored).to_html(full_html=False, include_plotlyjs=False),
     ]
+    # Add confusion matrix and ROC curve figures if prediction data present
+    if result.models:
+        first = result.models[0]
+        if first.y_true and first.y_pred:
+            from acbs.reporting.charts import confusion_matrix_heatmap, roc_curves
+            cm_fig = confusion_matrix_heatmap(first.y_true, first.y_pred).to_html(full_html=False, include_plotlyjs=False)
+            figs.append(cm_fig)
+            if first.y_proba:
+                roc_fig = roc_curves(first.y_true, first.y_proba).to_html(full_html=False, include_plotlyjs=False)
+                figs.append(roc_fig)
     table = scored.drop(columns=["best_params"], errors="ignore").to_html(index=False)
     failed = [m.model_dump() for m in result.models if m.status != "ok"]
     tmpl = _env().get_template("report.html.j2")
